@@ -1,0 +1,58 @@
+"""FastAPI server: web UI + chat API. Runs on Hugging Face Spaces (port 7860)."""
+import os
+import threading
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+import agent as core
+
+AGENT_TOKEN = os.getenv("AGENT_TOKEN", "")  # required to protect your agent
+STATIC = Path(__file__).parent / "static"
+
+app = FastAPI(title="Personal Agent")
+
+
+@app.on_event("startup")
+def _start_telegram():
+    # Free Render web service can't run a 2nd service, so the bot runs as a background thread.
+    if os.getenv("TELEGRAM_BOT_TOKEN"):
+        import telegram_bot
+        threading.Thread(target=telegram_bot.main, daemon=True).start()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+def auth(authorization: str = Header(default="")):
+    if AGENT_TOKEN and authorization != f"Bearer {AGENT_TOKEN}":
+        raise HTTPException(401, "invalid token")
+
+
+class ChatIn(BaseModel):
+    message: str
+    history: list[dict] | None = None
+
+
+@app.get("/")
+def index():
+    return FileResponse(STATIC / "index.html")
+
+
+@app.get("/health")
+def health():
+    return {"ok": True, "llm_providers": [p["name"] for p in core.PROVIDERS], "search": "tavily" if core.TAVILY_API_KEY else ("brave" if core.BRAVE_API_KEY else "duckduckgo")}
+
+
+@app.post("/api/chat", dependencies=[Depends(auth)])
+def chat(body: ChatIn):
+    return core.run_agent(body.message, body.history)
+
+
+@app.post("/api/upload", dependencies=[Depends(auth)])
+async def upload(file: UploadFile = File(...)):
+    dest = core._safe_path(file.filename)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(await file.read())
+    return {"saved": str(dest.relative_to(core.WORKSPACE))}
