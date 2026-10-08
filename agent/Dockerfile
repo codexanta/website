@@ -1,4 +1,4 @@
-# Hugging Face Spaces (Docker SDK) - Space must listen on port 7860
+# Works on Render (free Docker web service, reads $PORT) and Hugging Face (7860)
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -15,4 +15,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY --chown=user . .
 
 EXPOSE 7860
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-7860}"]

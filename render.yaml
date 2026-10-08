@@ -1,0 +1,35 @@
+# Render Blueprint: free Docker web service. Connect this repo on render.com -> New -> Blueprint
+services:
+  - type: web
+    name: personal-agent
+    runtime: docker
+    plan: free
+    rootDir: agent
+    healthCheckPath: /health
+    envVars:
+      - key: AGENT_TOKEN
+        sync: false            # set in Render dashboard (secret)
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: HF_TOKEN
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: BRAVE_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_ALLOWED_IDS
+        sync: false
+      - key: GH_TOKEN
+        sync: false
+      - key: GH_REPO
+        value: codexanta/website
+      - key: ENABLE_SHELL
+        value: "0"

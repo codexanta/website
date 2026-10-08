@@ -1,5 +1,6 @@
 """FastAPI server: web UI + chat API. Runs on Hugging Face Spaces (port 7860)."""
 import os
+import threading
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File
@@ -13,6 +14,14 @@ AGENT_TOKEN = os.getenv("AGENT_TOKEN", "")  # required to protect your agent
 STATIC = Path(__file__).parent / "static"
 
 app = FastAPI(title="Personal Agent")
+
+
+@app.on_event("startup")
+def _start_telegram():
+    # Free Render web service can't run a 2nd service, so the bot runs as a background thread.
+    if os.getenv("TELEGRAM_BOT_TOKEN"):
+        import telegram_bot
+        threading.Thread(target=telegram_bot.main, daemon=True).start()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
