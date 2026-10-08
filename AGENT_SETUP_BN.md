@@ -27,8 +27,8 @@
 3. https://huggingface.co/new-space → Name দিন, **SDK: Docker**, Hardware: *CPU basic (free)*, Create।
 4. Space-এর **Settings → Variables and secrets** এ যোগ করুন (Secret হিসেবে):
    - `AGENT_TOKEN` — নিজের একটা লম্বা গোপন পাসওয়ার্ড (যেমন ২০+ অক্ষর)। এটা ছাড়া যে কেউ আপনার এজেন্ট ব্যবহার করতে পারবে — **অবশ্যই দিন**।
-   - `LLM_API_KEY` — ফ্রি LLM কী (নিচে ধাপ ৩ দেখুন)।
-   - `LLM_BASE_URL`, `LLM_MODEL` (Variables হিসেবে) — ধাপ ৩ অনুযায়ী।
+   - `GEMINI_API_KEY`, `GROQ_API_KEY` ইত্যাদি — ধাপ ৩ দেখুন (অন্তত একটি লাগবে)।
+   - `TAVILY_API_KEY` — ওয়েব সার্চের জন্য (ঐচ্ছিক, ধাপ ৩ দেখুন)।
    - `ENABLE_SHELL` = `1` (শুধু যদি shell কমান্ড চালাতে চান)
    - `GH_TOKEN` (GitHub token, repo + workflow scope, APK বিল্ড ট্রিগারের জন্য) ও `GH_REPO` = `codexanta/website`
 5. ধাপ ১ এর ৩ নম্বরে `HF_SPACE` সেট করার পর GitHub-এ `main`-এ push করলে বা Actions থেকে **Deploy agent to Hugging Face Space** রান করলে কোড Space-এ যাবে।
@@ -36,23 +36,37 @@
 
 > ⚠️ `deploy-hf-space.yml` প্রতিবার Space-কে force-push করে। Space-এ নিজে কিছু এডিট করলে সেটা মুছে যাবে — তাই সব পরিবর্তন GitHub-এ করুন।
 
-## ধাপ ৩ — ফ্রি AI মডেল (LLM) কী নেবেন
-সবচেয়ে সহজ: **Groq** (ফ্রি, দ্রুত)
-1. https://console.groq.com → Sign up → API Keys → Create → কপি করুন।
-2. Space-এ সেট করুন:
-   - `LLM_BASE_URL` = `https://api.groq.com/openai/v1`
-   - `LLM_MODEL` = `llama-3.3-70b-versatile`
-   - `LLM_API_KEY` = আপনার Groq key
+## ধাপ ৩ — ফ্রি API ও সেরা ফ্রি মডেল (অটো-ফলব্যাক)
 
-বিকল্প (OpenAI-compatible): OpenRouter (`https://openrouter.ai/api/v1`, মডেল `meta-llama/llama-3.3-70b-instruct:free`), Google Gemini OpenAI endpoint (`https://generativelanguage.googleapis.com/v1beta/openai`).
+এজেন্ট একাধিক ফ্রি provider সাপোর্ট করে। যেটার key দেবেন সেটা অটো চালু হবে। একটা রেট-লিমিটে আটকালে পরের টা নিজে ব্যবহার করবে।
 
-> LLM কী না দিলে এজেন্ট "tools-only" মোডে চলবে: `search: ...`, `fetch: url`, `read: file`, `apk` ইত্যাদি সরাসরি কাজ করবে।
+| Provider | কোথায় key নেবেন | Space-এ Secret নাম | ফ্রি সীমা (অক্টোবর ২০২৬) | ডিফল্ট মডেল |
+|---|---|---|---|---|
+| **Google Gemini** (সেরা মান) | aistudio.google.com/apikey | `GEMINI_API_KEY` | Flash মডেল ফ্রি, কার্ড লাগে না। ⚠️ ফ্রি টিয়ারের ডাটা Google উন্নতিতে ব্যবহার করতে পারে | `gemini-2.5-flash` |
+| **Groq** (সবচেয়ে দ্রুত) | console.groq.com | `GROQ_API_KEY` | ~30 req/min, ~1,000 req/day, কার্ড লাগে না | `openai/gpt-oss-120b` |
+| **OpenRouter** (অনেক ফ্রি মডেল) | openrouter.ai/keys | `OPENROUTER_API_KEY` | `:free` মডেল, ২০ req/min, ৫০ req/day (১০ ডলার ক্রেডিট কিনলে ১,০০০/day) | `openrouter/free` (অটো বাছাই) |
+| **Mistral** | console.mistral.ai | `MISTRAL_API_KEY` | Experiment প্ল্যানে মাসিক ফ্রি ক্রেডিট, কার্ড লাগে না | `mistral-small-latest` |
+| **Hugging Face** | huggingface.co/settings/tokens | `HF_TOKEN` | Inference Providers-এ মাসিক ফ্রি ক্রেডিট | `openai/gpt-oss-120b` |
+| **Cerebras** (ঐচ্ছিক) | cloud.cerebras.ai | `CEREBRAS_API_KEY` | বর্তমানে ট্রায়াল ($৫) ও কার্ড লাগতে পারে | `gpt-oss-120b` |
+
+**সুপারিশ:** অন্তত দুটি নিন — `GEMINI_API_KEY` (মানের জন্য) + `GROQ_API_KEY` (গতির জন্য)। তৃতীয় হিসেবে `OPENROUTER_API_KEY`।
+
+> ফ্রি মডেলের তালিকা প্রায়ই বদলায়। মডেল বদলাতে চাইলে Space-এ `GEMINI_MODEL`, `GROQ_MODEL` ইত্যাদি Variable যোগ করুন। ফ্রি মডেলের বর্তমান তালিকা দেখতে: openrouter.ai/models?max_price=0
+
+### সার্চ (ইন্টারনেট রিসার্চ)
+| Provider | Secret | ফ্রি সীমা |
+|---|---|---|
+| **Tavily** (সুপারিশ, AI-এর জন্য তৈরি) | `TAVILY_API_KEY` | ১,০০০ credit/মাস, কার্ড লাগে না |
+| **Brave Search** | `BRAVE_API_KEY` | $৫ credit/মাস (কার্ড লাগে, attribution দিতে হয়) |
+| DuckDuckGo | কিছু লাগে না | কী ছাড়াই ফলব্যাক, তবে মাঝে মাঝে ব্লক হতে পারে |
+
+**Tavily key নিতে:** tavily.com → Sign up → API key (`tvly-...`) কপি করুন।
 
 ## ধাপ ৪ — Telegram বট (মোবাইল কন্ট্রোল)
 1. Telegram-এ **@BotFather** → `/newbot` → নাম দিন → Token কপি করুন।
 2. আপনার Telegram ID জানতে **@userinfobot**-এ `/start` দিন → আপনার ID নম্বরটি নিন।
 3. বট চালাতে দুটো উপায়:
-   - **(ক)** নিজের কম্পিউটারে/Termux-এ: `cd agent && pip install -r requirements.txt && TELEGRAM_BOT_TOKEN=... TELEGRAM_ALLOWED_IDS=আপনার_ID LLM_API_KEY=... python telegram_bot.py`
+   - **(ক)** নিজের কম্পিউটারে/Termux-এ: `cd agent && pip install -r requirements.txt && TELEGRAM_BOT_TOKEN=... TELEGRAM_ALLOWED_IDS=আপনার_ID GROQ_API_KEY=... python telegram_bot.py`
    - **(খ)** 24/7 চাইলে: Hugging Face-এর আলাদা একটা Space (Docker) বানিয়ে ওখানে `Dockerfile`-এর `CMD` বদলে `python telegram_bot.py` দিন এবং Secrets-এ `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_IDS` দিন। (Space-এ দুটো প্রসেস চালাতে চাইলে আলাদা Space-ই ভালো।)
    - `TELEGRAM_ALLOWED_IDS` **অবশ্যই** দিন, নইলে যে কেউ আপনার বটকে ব্যবহার করতে পারবে।
 

@@ -18,9 +18,51 @@ import httpx
 WORKSPACE = Path(os.getenv("AGENT_WORKSPACE", "/tmp/agent_workspace")).resolve()
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1")
-LLM_API_KEY = os.getenv("LLM_API_KEY", "")
-LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
+# ---- LLM providers (all OpenAI-compatible, all have free tiers) ----
+# A provider is enabled automatically when its API key secret is set.
+# Tried in order; if one fails (rate limit / error) the next one is used.
+# Override the order with LLM_PROVIDER_ORDER=groq,gemini,openrouter,...
+PROVIDER_DEFAULTS = {
+    "groq": {"key": "GROQ_API_KEY", "base": "https://api.groq.com/openai/v1",
+             "model": "openai/gpt-oss-120b"},
+    "gemini": {"key": "GEMINI_API_KEY", "base": "https://generativelanguage.googleapis.com/v1beta/openai",
+               "model": "gemini-2.5-flash"},
+    "openrouter": {"key": "OPENROUTER_API_KEY", "base": "https://openrouter.ai/api/v1",
+                   "model": "openrouter/free"},
+    "mistral": {"key": "MISTRAL_API_KEY", "base": "https://api.mistral.ai/v1",
+                "model": "mistral-small-latest"},
+    "cerebras": {"key": "CEREBRAS_API_KEY", "base": "https://api.cerebras.ai/v1",
+                 "model": "gpt-oss-120b"},
+    "huggingface": {"key": "HF_TOKEN", "base": "https://router.huggingface.co/v1",
+                    "model": "openai/gpt-oss-120b"},
+}
+
+
+def _build_providers():
+    order = [p.strip() for p in os.getenv("LLM_PROVIDER_ORDER", "").split(",") if p.strip()]
+    if not order:
+        order = list(PROVIDER_DEFAULTS)
+    chain = []
+    for name in order:
+        cfg = PROVIDER_DEFAULTS.get(name)
+        if not cfg:
+            continue
+        key = os.getenv(cfg["key"], "").strip()
+        if key:
+            chain.append({
+                "name": name, "key": key,
+                "base": os.getenv(f"{name.upper()}_BASE_URL", cfg["base"]),
+                "model": os.getenv(f"{name.upper()}_MODEL", cfg["model"]),
+            })
+    return chain
+
+
+PROVIDERS = _build_providers()
+LLM_API_KEY = PROVIDERS[0]["key"] if PROVIDERS else ""
+
+# ---- Search providers (Tavily -> Brave -> DuckDuckGo no-key fallback) ----
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")  # tavily.com: 1,000 credits/month free
+BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "")    # brave.com/search/api: $5 credits/month
 ENABLE_SHELL = os.getenv("ENABLE_SHELL", "0") == "1"
 SHELL_ALLOWLIST = {c.strip() for c in os.getenv(
     "SHELL_ALLOWLIST", "ls,cat,head,tail,wc,echo,pwd,date,python3,pip,git,grep,find,unzip,zip,tar,curl"
@@ -38,7 +80,26 @@ SYSTEM_PROMPT = (
 
 # ---------------- tools ----------------
 def tool_web_search(query: str) -> str:
-    """DuckDuckGo HTML search (no API key needed)."""
+    """Tavily -> Brave -> DuckDuckGo (no key). Best available provider is used."""
+    try:
+        if TAVILY_API_KEY:
+            r = httpx.post("https://api.tavily.com/search", timeout=20,
+                           headers={"Authorization": f"Bearer {TAVILY_API_KEY}"},
+                           json={"query": query, "max_results": 6})
+            r.raise_for_status()
+            rows = [f"- {x['title']}\n  {x['url']}\n  {x.get('content', '')[:300]}"
+                    for x in r.json().get("results", [])]
+            return "\n".join(rows) or "No results."
+        if BRAVE_API_KEY:
+            r = httpx.get("https://api.search.brave.com/res/v1/web/search", timeout=20,
+                          headers={"X-Subscription-Token": BRAVE_API_KEY, "Accept": "application/json"},
+                          params={"q": query, "count": 6})
+            r.raise_for_status()
+            rows = [f"- {x['title']}\n  {x['url']}\n  {x.get('description', '')}"
+                    for x in r.json().get("web", {}).get("results", [])]
+            return "\n".join(rows) or "No results."
+    except Exception as e:  # noqa: BLE001
+        return f"search error: {e}"
     try:
         r = httpx.get(
             "https://html.duckduckgo.com/html/",
@@ -169,24 +230,33 @@ def _openai_tools():
 
 
 def _call_llm(messages):
-    r = httpx.post(
-        f"{LLM_BASE_URL.rstrip('/')}/chat/completions",
-        headers={"Authorization": f"Bearer {LLM_API_KEY}"},
-        json={"model": LLM_MODEL, "messages": messages, "tools": _openai_tools(),
-              "tool_choice": "auto"},
-        timeout=90,
-    )
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]
+    """Try each configured provider in order; fall back on any error."""
+    errors = []
+    for p in PROVIDERS:
+        try:
+            r = httpx.post(
+                f"{p['base'].rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {p['key']}"},
+                json={"model": p["model"], "messages": messages,
+                      "tools": _openai_tools(), "tool_choice": "auto"},
+                timeout=90,
+            )
+            r.raise_for_status()
+            msg = r.json()["choices"][0]["message"]
+            msg["_provider"] = p["name"]
+            return msg
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{p['name']}: {e}")
+    raise RuntimeError("all LLM providers failed -> " + " | ".join(errors))
 
 
 def run_agent(user_text: str, history: list[dict] | None = None, max_steps: int = 6) -> dict:
     """Returns {"reply": str, "tool_calls": [..]}."""
-    if not LLM_API_KEY:
+    if not PROVIDERS:
         # Tools-only fallback: lets you test without any API key.
         m = re.match(r"^(search|fetch|read|shell|apk)\s*:?\s*(.*)$", user_text.strip(), re.I)
         if not m:
-            return {"reply": "LLM_API_KEY set kora nei. Ekhon tools-only mode: "
+            return {"reply": "Kono LLM key set kora nei (GEMINI_API_KEY, GROQ_API_KEY...). Ekhon tools-only mode: "
                              "'search: query', 'fetch: url', 'read: file.txt', "
                              "'shell: ls', 'apk'.", "tool_calls": []}
         cmd, arg = m.group(1).lower(), m.group(2)
@@ -208,6 +278,7 @@ def run_agent(user_text: str, history: list[dict] | None = None, max_steps: int 
         tool_calls = msg.get("tool_calls") or []
         if not tool_calls:
             return {"reply": msg.get("content") or "", "tool_calls": calls_log}
+        msg = {k: v for k, v in msg.items() if not k.startswith("_")}
         messages.append(msg)
         for tc in tool_calls:
             name = tc["function"]["name"]

@@ -33,7 +33,7 @@ def index():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "llm_configured": bool(core.LLM_API_KEY)}
+    return {"ok": True, "llm_providers": [p["name"] for p in core.PROVIDERS], "search": "tavily" if core.TAVILY_API_KEY else ("brave" if core.BRAVE_API_KEY else "duckduckgo")}
 
 
 @app.post("/api/chat", dependencies=[Depends(auth)])
